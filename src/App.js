@@ -740,21 +740,23 @@ const App = () => {
                     <div className="flex justify-between items-center h-16">
                         <div className="flex items-center">
                             <span className="text-white text-xl font-bold tracking-wider">
-                                ⛽ CNG CRM (UI MOCK MODE)
+                               Umiya Tank Testing Plant
                             </span>
                         </div>
                         <div className="flex space-x-4">
                             {[
-             
+                                      // 🆕 added
+{ name: 'Dashboard', key: 'Dashboard' },  
                                 { name: 'Sales & Warranty', key: 'SalesAssignment' },
                                 { name: 'Service Entry', key: 'ServiceMaster' },
                                 { name: 'Customer List', key: 'CustomerMaster' },
                                 { name: 'Product Master', key: 'ProductMaster' },
+                                { name: 'Reports', key: 'Reports' }, 
                             ].map((item) => (
                                 <button
                                     key={item.key}
                                     onClick={() => setView(item.key)}
-                                    className={`px-3 py-2 rounded-md text-sm font-medium transition duration-150 ${
+                                  className={`px-3 py-2 rounded-md text-sm font-medium transition duration-150 ${
                                         view === item.key
                                             ? 'bg-blue-800 text-white'
                                             : 'text-blue-100 hover:bg-blue-500 hover:text-white'
