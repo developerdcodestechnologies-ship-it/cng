@@ -52,61 +52,310 @@ const COLLECTIONS = {
   LOGS: 'logs'
 };
 
-// 創建全局數據緩存上下文
+// 創建全局數據上下文
 const FirebaseDataContext = createContext();
 
 export const FirebaseDataProvider = ({ children }) => {
-    const [dataCache, setDataCache] = useState(() => {
-        // 從 localStorage 初始化緩存
-        const savedCache = localStorage.getItem('firebase_data_cache');
-        return savedCache ? JSON.parse(savedCache) : {};
+    const [data, setData] = useState({
+        customers: [],
+        products: [],
+        mappings: [],
+        services: [],
+        logs: []
     });
     
-    // 保存緩存到 localStorage
-    useEffect(() => {
+    const [loading, setLoading] = useState({
+        customers: true,
+        products: true,
+        mappings: true,
+        services: true,
+        logs: true
+    });
+    
+    const [errors, setErrors] = useState({});
+    
+    // 加載所有數據的函數
+    const loadAllData = async () => {
         try {
-            localStorage.setItem('firebase_data_cache', JSON.stringify(dataCache));
+            console.log('Loading all data from Firebase...');
+            
+            // 並行加載所有集合
+            const [
+                customersSnapshot,
+                productsSnapshot,
+                mappingsSnapshot,
+                servicesSnapshot,
+                logsSnapshot
+            ] = await Promise.all([
+                getDocs(collection(db, COLLECTIONS.CUSTOMERS)),
+                getDocs(collection(db, COLLECTIONS.PRODUCTS)),
+                getDocs(collection(db, COLLECTIONS.MAPPINGS)),
+                getDocs(collection(db, COLLECTIONS.SERVICES)),
+                getDocs(collection(db, COLLECTIONS.LOGS))
+            ]);
+            
+            const newData = {
+                customers: customersSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })),
+                products: productsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })),
+                mappings: mappingsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })),
+                services: servicesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })),
+                logs: logsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }))
+            };
+            
+            console.log('Loaded all data:', {
+                customers: newData.customers.length,
+                products: newData.products.length,
+                mappings: newData.mappings.length,
+                services: newData.services.length,
+                logs: newData.logs.length
+            });
+            
+            setData(newData);
+            setLoading({
+                customers: false,
+                products: false,
+                mappings: false,
+                services: false,
+                logs: false
+            });
+            
+            // 保存到本地緩存
+            localStorage.setItem('firebase_all_data', JSON.stringify({
+                data: newData,
+                timestamp: Date.now()
+            }));
+            
         } catch (error) {
-            console.error('Error saving cache to localStorage:', error);
-        }
-    }, [dataCache]);
-
-    const updateCache = (collectionName, data) => {
-        setDataCache(prev => ({
-            ...prev,
-            [collectionName]: {
-                data,
-                timestamp: Date.now(),
-                version: '1.0'
+            console.error('Error loading all data:', error);
+            
+            // 嘗試從緩存加載
+            try {
+                const cached = localStorage.getItem('firebase_all_data');
+                if (cached) {
+                    const parsed = JSON.parse(cached);
+                    if (Date.now() - parsed.timestamp < 30 * 60 * 1000) { // 30分鐘內有效
+                        console.log('Using cached data');
+                        setData(parsed.data);
+                    }
+                }
+            } catch (cacheError) {
+                console.error('Error loading from cache:', cacheError);
             }
-        }));
-    };
-
-    const getCache = (collectionName) => {
-        const cache = dataCache[collectionName];
-        if (cache && cache.timestamp) {
-            // 檢查緩存是否過期（5分鐘）
-            const isExpired = Date.now() - cache.timestamp > 5 * 60 * 1000;
-            if (!isExpired) {
-                return cache.data || [];
-            }
+            
+            setErrors({ global: error.message });
+            setLoading({
+                customers: false,
+                products: false,
+                mappings: false,
+                services: false,
+                logs: false
+            });
         }
-        return [];
     };
-
+    
+    // 設置實時監聽器
+    useEffect(() => {
+        console.log('Setting up real-time listeners...');
+        
+        const unsubscribers = [];
+        
+        // 監聽 customers
+        const customersUnsub = onSnapshot(
+            collection(db, COLLECTIONS.CUSTOMERS),
+            (snapshot) => {
+                const customers = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                console.log('Customers updated:', customers.length);
+                setData(prev => ({ ...prev, customers }));
+                setLoading(prev => ({ ...prev, customers: false }));
+            },
+            (error) => {
+                console.error('Customers listener error:', error);
+                setErrors(prev => ({ ...prev, customers: error.message }));
+            }
+        );
+        unsubscribers.push(customersUnsub);
+        
+        // 監聽 products
+        const productsUnsub = onSnapshot(
+            collection(db, COLLECTIONS.PRODUCTS),
+            (snapshot) => {
+                const products = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                console.log('Products updated:', products.length);
+                setData(prev => ({ ...prev, products }));
+                setLoading(prev => ({ ...prev, products: false }));
+            },
+            (error) => {
+                console.error('Products listener error:', error);
+                setErrors(prev => ({ ...prev, products: error.message }));
+            }
+        );
+        unsubscribers.push(productsUnsub);
+        
+        // 監聽 mappings
+        const mappingsUnsub = onSnapshot(
+            collection(db, COLLECTIONS.MAPPINGS),
+            (snapshot) => {
+                const mappings = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                console.log('Mappings updated:', mappings.length);
+                setData(prev => ({ ...prev, mappings }));
+                setLoading(prev => ({ ...prev, mappings: false }));
+            },
+            (error) => {
+                console.error('Mappings listener error:', error);
+                setErrors(prev => ({ ...prev, mappings: error.message }));
+            }
+        );
+        unsubscribers.push(mappingsUnsub);
+        
+        // 監聽 services
+        const servicesUnsub = onSnapshot(
+            collection(db, COLLECTIONS.SERVICES),
+            (snapshot) => {
+                const services = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                console.log('Services updated:', services.length);
+                setData(prev => ({ ...prev, services }));
+                setLoading(prev => ({ ...prev, services: false }));
+            },
+            (error) => {
+                console.error('Services listener error:', error);
+                setErrors(prev => ({ ...prev, services: error.message }));
+            }
+        );
+        unsubscribers.push(servicesUnsub);
+        
+        // 監聽 logs
+        const logsUnsub = onSnapshot(
+            collection(db, COLLECTIONS.LOGS),
+            (snapshot) => {
+                const logs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                console.log('Logs updated:', logs.length);
+                setData(prev => ({ ...prev, logs }));
+                setLoading(prev => ({ ...prev, logs: false }));
+            },
+            (error) => {
+                console.error('Logs listener error:', error);
+                setErrors(prev => ({ ...prev, logs: error.message }));
+            }
+        );
+        unsubscribers.push(logsUnsub);
+        
+        // 初始加載
+        loadAllData();
+        
+        return () => {
+            console.log('Cleaning up listeners');
+            unsubscribers.forEach(unsub => unsub());
+        };
+    }, []);
+    
+    // CRUD 操作
+    const addItem = async (collectionName, item) => {
+        try {
+            console.log(`Adding to ${collectionName}:`, item);
+            const docRef = await addDoc(collection(db, collectionName), {
+                ...item,
+                created_at: serverTimestamp(),
+                updated_at: serverTimestamp()
+            });
+            
+            const newItem = { id: docRef.id, ...item };
+            
+            // 更新本地狀態
+            setData(prev => ({
+                ...prev,
+                [collectionName]: [...prev[collectionName], newItem]
+            }));
+            
+            return { success: true, id: docRef.id, item: newItem };
+        } catch (error) {
+            console.error(`Error adding to ${collectionName}:`, error);
+            return { success: false, error: error.message };
+        }
+    };
+    
+    const updateItem = async (collectionName, id, updates) => {
+        try {
+            console.log(`Updating ${collectionName}/${id}:`, updates);
+            const docRef = doc(db, collectionName, id);
+            await updateDoc(docRef, {
+                ...updates,
+                updated_at: serverTimestamp()
+            });
+            
+            // 更新本地狀態
+            setData(prev => ({
+                ...prev,
+                [collectionName]: prev[collectionName].map(item => 
+                    item.id === id ? { ...item, ...updates } : item
+                )
+            }));
+            
+            return { success: true };
+        } catch (error) {
+            console.error(`Error updating ${collectionName}:`, error);
+            return { success: false, error: error.message };
+        }
+    };
+    
+    const deleteItem = async (collectionName, id) => {
+        try {
+            console.log(`Deleting from ${collectionName}:`, id);
+            const docRef = doc(db, collectionName, id);
+            await deleteDoc(docRef);
+            
+            // 更新本地狀態
+            setData(prev => ({
+                ...prev,
+                [collectionName]: prev[collectionName].filter(item => item.id !== id)
+            }));
+            
+            return { success: true };
+        } catch (error) {
+            console.error(`Error deleting from ${collectionName}:`, error);
+            return { success: false, error: error.message };
+        }
+    };
+    
+    const refreshData = () => {
+        console.log('Refreshing all data...');
+        setLoading({
+            customers: true,
+            products: true,
+            mappings: true,
+            services: true,
+            logs: true
+        });
+        loadAllData();
+    };
+    
     const clearCache = () => {
-        setDataCache({});
-        localStorage.removeItem('firebase_data_cache');
+        localStorage.removeItem('firebase_all_data');
+        refreshData();
     };
-
+    
     return (
-        <FirebaseDataContext.Provider value={{ dataCache, updateCache, getCache, clearCache }}>
+        <FirebaseDataContext.Provider value={{
+            data,
+            loading,
+            errors,
+            addItem,
+            updateItem,
+            deleteItem,
+            refreshData,
+            clearCache
+        }}>
             {children}
         </FirebaseDataContext.Provider>
     );
 };
 
-export const useFirebaseDataContext = () => useContext(FirebaseDataContext);
+export const useFirebaseData = () => {
+    const context = useContext(FirebaseDataContext);
+    if (!context) {
+        throw new Error('useFirebaseData must be used within FirebaseDataProvider');
+    }
+    return context;
+};
 
 // 錯誤邊界組件
 class ErrorBoundary extends React.Component {
@@ -144,7 +393,7 @@ class ErrorBoundary extends React.Component {
     
     handleClearCache = () => {
         try {
-            localStorage.removeItem('firebase_data_cache');
+            localStorage.removeItem('firebase_all_data');
             localStorage.removeItem('app_errors');
             this.handleRetry();
         } catch (error) {
@@ -307,29 +556,6 @@ const Select = ({ label, name, value, onChange, options, required = false }) => 
     </div>
 );
 
-// --- COMPONENT DEFINITIONS ---
-
-const initialCustomerData = {
-    first_name: '', last_name: '', mobile_number: '', whatsapp_number: '',
-    address: '', city: '', state: '', vehicle_number: '', vehicle_model: ''
-};
-
-const initialMappingData = {
-    product_id: '',
-    product_purchase_date: new Date().toISOString().split('T')[0],
-    product_fitting_date: '',
-    product_warranty_period: 12,
-    warranty_expiry_date: '',
-    reminder_status: {
-        rem_1_sent: false,
-        rem_2_sent: false,
-        rem_3_sent: false,
-        renewal_sent: false,
-        warranty_renewed: false
-    },
-    notes: ''
-};
-
 // Responsive Table Component
 const ResponsiveTable = ({ columns, data, title }) => {
     const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
@@ -388,264 +614,26 @@ const ResponsiveTable = ({ columns, data, title }) => {
     );
 };
 
-// 增強版的 Firebase CRUD Operations
-const useFirebaseData = (collectionName) => {
-    const [data, setData] = useState(() => {
-        // 從 localStorage 加載緩存數據
-        try {
-            const cacheKey = `fb_cache_${collectionName}`;
-            const cached = localStorage.getItem(cacheKey);
-            if (cached) {
-                const parsed = JSON.parse(cached);
-                // 檢查緩存是否過期（10分鐘）
-                if (Date.now() - parsed.timestamp < 10 * 60 * 1000) {
-                    console.log(`Loaded ${collectionName} from cache:`, parsed.data.length, 'items');
-                    return parsed.data;
-                }
-            }
-        } catch (error) {
-            console.error('Error loading from cache:', error);
-        }
-        return [];
-    });
-    
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState(null);
-    const [retryCount, setRetryCount] = useState(0);
+// 初始數據結構
+const initialCustomerData = {
+    first_name: '', last_name: '', mobile_number: '', whatsapp_number: '',
+    address: '', city: '', state: '', vehicle_number: '', vehicle_model: ''
+};
 
-    const saveToCache = (dataToCache) => {
-        try {
-            const cacheKey = `fb_cache_${collectionName}`;
-            const cacheData = {
-                data: dataToCache,
-                timestamp: Date.now(),
-                collection: collectionName
-            };
-            localStorage.setItem(cacheKey, JSON.stringify(cacheData));
-        } catch (error) {
-            console.error('Error saving to cache:', error);
-        }
-    };
-
-    const loadData = async () => {
-        try {
-            console.log(`Loading ${collectionName} from Firebase...`);
-            const snapshot = await getDocs(collection(db, collectionName));
-            const dataList = snapshot.docs.map(doc => ({
-                id: doc.id,
-                ...doc.data()
-            }));
-            
-            setData(dataList);
-            saveToCache(dataList);
-            setLoading(false);
-            setError(null);
-            console.log(`Loaded ${collectionName} from Firebase:`, dataList.length, 'items');
-        } catch (err) {
-            console.error(`Error loading ${collectionName}:`, err);
-            
-            // 如果 Firebase 失敗，使用緩存數據
-            if (data.length > 0) {
-                console.log(`Using cached data for ${collectionName}`);
-                setLoading(false);
-            } else {
-                setError(`Failed to load ${collectionName}: ${err.message}`);
-                setLoading(false);
-                
-                // 自動重試機制
-                if (retryCount < 3) {
-                    setTimeout(() => {
-                        setRetryCount(prev => prev + 1);
-                    }, 2000 * (retryCount + 1));
-                }
-            }
-        }
-    };
-
-    useEffect(() => {
-        // 首次加載
-        loadData();
-        
-        // 設置實時監聽器
-        console.log(`Setting up real-time listener for ${collectionName}`);
-        
-        const unsubscribe = onSnapshot(
-            collection(db, collectionName),
-            (snapshot) => {
-                console.log(`${collectionName} real-time update received:`, snapshot.docs.length, 'documents');
-                const dataList = snapshot.docs.map(doc => ({
-                    id: doc.id,
-                    ...doc.data()
-                }));
-                
-                setData(dataList);
-                saveToCache(dataList);
-                setLoading(false);
-                setError(null);
-            },
-            (err) => {
-                console.error(`Error in ${collectionName} listener:`, err);
-                setError(`Connection error for ${collectionName}: ${err.message}`);
-                
-                // 不停止加載狀態，保持緩存數據顯示
-                setLoading(false);
-            }
-        );
-
-        return () => {
-            console.log(`Cleaning up listener for ${collectionName}`);
-            unsubscribe();
-        };
-    }, [collectionName, retryCount]);
-
-    const addItem = async (item) => {
-        try {
-            console.log(`Adding item to ${collectionName}:`, item);
-            const docRef = await addDoc(collection(db, collectionName), {
-                ...item,
-                created_at: serverTimestamp(),
-                updated_at: serverTimestamp()
-            });
-            
-            console.log(`Item added with ID: ${docRef.id}`);
-            
-            // 更新本地緩存
-            const newItem = { id: docRef.id, ...item };
-            setData(prev => [...prev, newItem]);
-            saveToCache([...data, newItem]);
-            
-            return { success: true, id: docRef.id };
-        } catch (err) {
-            console.error(`Error adding to ${collectionName}:`, err);
-            
-            // 如果離線，添加到本地隊列
-            if (err.code === 'unavailable') {
-                try {
-                    const offlineQueue = JSON.parse(localStorage.getItem('offline_queue') || '[]');
-                    offlineQueue.push({
-                        collection: collectionName,
-                        action: 'add',
-                        data: item,
-                        timestamp: Date.now()
-                    });
-                    localStorage.setItem('offline_queue', JSON.stringify(offlineQueue));
-                    
-                    // 更新本地狀態
-                    const tempId = `offline_${Date.now()}`;
-                    const newItem = { id: tempId, ...item };
-                    setData(prev => [...prev, newItem]);
-                    saveToCache([...data, newItem]);
-                    
-                    return { success: true, id: tempId, offline: true };
-                } catch (e) {
-                    console.error('Error saving to offline queue:', e);
-                }
-            }
-            
-            return { success: false, error: err.message };
-        }
-    };
-
-    const updateItem = async (id, item) => {
-        try {
-            console.log(`Updating item in ${collectionName}:`, id, item);
-            const docRef = doc(db, collectionName, id);
-            await updateDoc(docRef, {
-                ...item,
-                updated_at: serverTimestamp()
-            });
-            
-            // 更新本地緩存
-            setData(prev => prev.map(d => d.id === id ? { ...d, ...item } : d));
-            saveToCache(data.map(d => d.id === id ? { ...d, ...item } : d));
-            
-            return { success: true };
-        } catch (err) {
-            console.error(`Error updating ${collectionName}:`, err);
-            
-            // 如果離線，添加到本地隊列
-            if (err.code === 'unavailable') {
-                try {
-                    const offlineQueue = JSON.parse(localStorage.getItem('offline_queue') || '[]');
-                    offlineQueue.push({
-                        collection: collectionName,
-                        action: 'update',
-                        id: id,
-                        data: item,
-                        timestamp: Date.now()
-                    });
-                    localStorage.setItem('offline_queue', JSON.stringify(offlineQueue));
-                    
-                    // 更新本地狀態
-                    setData(prev => prev.map(d => d.id === id ? { ...d, ...item } : d));
-                    saveToCache(data.map(d => d.id === id ? { ...d, ...item } : d));
-                    
-                    return { success: true, offline: true };
-                } catch (e) {
-                    console.error('Error saving to offline queue:', e);
-                }
-            }
-            
-            return { success: false, error: err.message };
-        }
-    };
-
-    const deleteItem = async (id) => {
-        try {
-            console.log(`Deleting item from ${collectionName}:`, id);
-            const docRef = doc(db, collectionName, id);
-            await deleteDoc(docRef);
-            
-            // 更新本地緩存
-            setData(prev => prev.filter(d => d.id !== id));
-            saveToCache(data.filter(d => d.id !== id));
-            
-            return { success: true };
-        } catch (err) {
-            console.error(`Error deleting from ${collectionName}:`, err);
-            
-            // 如果離線，添加到本地隊列
-            if (err.code === 'unavailable') {
-                try {
-                    const offlineQueue = JSON.parse(localStorage.getItem('offline_queue') || '[]');
-                    offlineQueue.push({
-                        collection: collectionName,
-                        action: 'delete',
-                        id: id,
-                        timestamp: Date.now()
-                    });
-                    localStorage.setItem('offline_queue', JSON.stringify(offlineQueue));
-                    
-                    // 更新本地狀態
-                    setData(prev => prev.filter(d => d.id !== id));
-                    saveToCache(data.filter(d => d.id !== id));
-                    
-                    return { success: true, offline: true };
-                } catch (e) {
-                    console.error('Error saving to offline queue:', e);
-                }
-            }
-            
-            return { success: false, error: err.message };
-        }
-    };
-
-    const retryConnection = () => {
-        setLoading(true);
-        setRetryCount(prev => prev + 1);
-        loadData();
-    };
-
-    return { 
-        data, 
-        loading, 
-        error, 
-        addItem, 
-        updateItem, 
-        deleteItem, 
-        retryConnection,
-        retryCount 
-    };
+const initialMappingData = {
+    product_id: '',
+    product_purchase_date: new Date().toISOString().split('T')[0],
+    product_fitting_date: '',
+    product_warranty_period: 12,
+    warranty_expiry_date: '',
+    reminder_status: {
+        rem_1_sent: false,
+        rem_2_sent: false,
+        rem_3_sent: false,
+        renewal_sent: false,
+        warranty_renewed: false
+    },
+    notes: ''
 };
 
 // 1. CONSOLIDATED SALES ASSIGNMENT VIEW
@@ -658,11 +646,14 @@ const SalesAssignment = () => {
     const [renewalConfirmation, setRenewalConfirmation] = useState(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
     
-    const { data: allCustomers, loading: customersLoading, error: customersError } = useFirebaseData(COLLECTIONS.CUSTOMERS);
-    const { data: allProducts, loading: productsLoading, error: productsError } = useFirebaseData(COLLECTIONS.PRODUCTS);
-    const { data: allMappings, loading: mappingsLoading } = useFirebaseData(COLLECTIONS.MAPPINGS);
+    // 使用全局數據
+    const { 
+        data: { customers: allCustomers, products: allProducts, mappings: allMappings }, 
+        loading: { customers: customersLoading, products: productsLoading, mappings: mappingsLoading },
+        addItem,
+        refreshData
+    } = useFirebaseData();
 
-    // 檢查連接狀態
     const isOnline = navigator.onLine;
 
     useEffect(() => {
@@ -670,10 +661,7 @@ const SalesAssignment = () => {
         console.log('SalesAssignment - Customers:', allCustomers.length);
         console.log('SalesAssignment - Products:', allProducts.length);
         console.log('SalesAssignment - Mappings:', allMappings.length);
-        
-        if (customersError) console.error('Customers error:', customersError);
-        if (productsError) console.error('Products error:', productsError);
-    }, [allCustomers, allProducts, allMappings, customersError, productsError, isOnline]);
+    }, [allCustomers, allProducts, allMappings, isOnline]);
 
     useEffect(() => {
         const purchaseDate = mappingData.product_purchase_date;
@@ -739,24 +727,21 @@ const SalesAssignment = () => {
                 // Create new customer
                 const newCustomer = {
                     ...customerData,
-                    created_at: serverTimestamp(),
-                    updated_at: serverTimestamp()
+                    created_at: new Date().toISOString(),
+                    updated_at: new Date().toISOString()
                 };
                 
                 console.log('Adding new customer:', newCustomer);
-                const result = await addDoc(collection(db, COLLECTIONS.CUSTOMERS), newCustomer);
+                const result = await addItem(COLLECTIONS.CUSTOMERS, newCustomer);
                 
-                if (result.offline) {
-                    finalCustomerId = result.id;
-                    customerName = customerData.first_name;
-                    logAction = 'New Customer & Product Assignment (Offline)';
-                    console.log('New customer saved offline with ID:', finalCustomerId);
-                } else {
-                    finalCustomerId = result.id;
-                    customerName = customerData.first_name;
-                    logAction = 'New Customer & Product Assignment';
-                    console.log('New customer created with ID:', finalCustomerId);
+                if (!result.success) {
+                    throw new Error(result.error);
                 }
+                
+                finalCustomerId = result.id;
+                customerName = customerData.first_name;
+                logAction = 'New Customer & Product Assignment';
+                console.log('New customer created with ID:', finalCustomerId);
             } else {
                 if (!selectedCustomerId) {
                     setMessage('Error: Please select an existing customer.');
@@ -793,15 +778,15 @@ const SalesAssignment = () => {
                 warranty_expiry_date: calculatedExpiryDate,
                 reminder_status: mappingData.reminder_status,
                 notes: mappingData.notes || '',
-                created_at: serverTimestamp(),
-                updated_at: serverTimestamp()
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString()
             };
 
             console.log('Saving mapping:', mappingToSave);
-            const mappingResult = await addDoc(collection(db, COLLECTIONS.MAPPINGS), mappingToSave);
+            const mappingResult = await addItem(COLLECTIONS.MAPPINGS, mappingToSave);
             
-            if (mappingResult.offline) {
-                console.log('Mapping saved offline');
+            if (!mappingResult.success) {
+                throw new Error(mappingResult.error);
             }
 
             // Save log
@@ -812,12 +797,12 @@ const SalesAssignment = () => {
                 notes: mappingData.notes || `${logAction} completed`,
                 product_id: mappingData.product_id,
                 log_type: 'Warranty/Sales',
-                created_at: serverTimestamp(),
-                updated_at: serverTimestamp()
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString()
             };
             
             console.log('Saving log:', logToSave);
-            await addDoc(collection(db, COLLECTIONS.LOGS), logToSave);
+            await addItem(COLLECTIONS.LOGS, logToSave);
 
             if (customerType === 'existing') {
                 setRenewalConfirmation({
@@ -833,6 +818,9 @@ const SalesAssignment = () => {
             
             setMessage(successMessage);
             resetForm();
+            
+            // 刷新數據以確保同步
+            refreshData();
 
         } catch (error) {
             console.error("Error saving sales assignment:", error);
@@ -893,7 +881,7 @@ const SalesAssignment = () => {
                     {message}
                 </div>
             )}
-            
+
             {renewalConfirmation && (
                  <Card title="Renewal Confirmation Message (Auto-Sent)" className="mx-4 md:mx-0">
                     <p className="text-gray-700 text-sm md:text-base">The following message was automatically sent to the customer via WhatsApp/SMS:</p>
@@ -1015,18 +1003,18 @@ const SalesAssignment = () => {
 
 // 7. Customer Product Mapping List
 const CustomerProductMappingList = () => {
-    const { data: allCustomers, loading: customersLoading, error: customersError } = useFirebaseData(COLLECTIONS.CUSTOMERS);
-    const { data: allProducts, loading: productsLoading, error: productsError } = useFirebaseData(COLLECTIONS.PRODUCTS);
-    const { data: allMappings, loading: mappingsLoading } = useFirebaseData(COLLECTIONS.MAPPINGS);
+    // 使用全局數據
+    const { 
+        data: { customers: allCustomers, products: allProducts, mappings: allMappings }, 
+        loading: { customers: customersLoading, products: productsLoading, mappings: mappingsLoading }
+    } = useFirebaseData();
     
     useEffect(() => {
         console.log('CustomerProductMappingList - Customers:', allCustomers.length);
         console.log('CustomerProductMappingList - Products:', allProducts.length);
         console.log('CustomerProductMappingList - Mappings:', allMappings.length);
-        
-        if (customersError) console.error('Customers error:', customersError);
-        if (productsError) console.error('Products error:', productsError);
-    }, [allCustomers, allProducts, allMappings, customersError, productsError]);
+    }, [allCustomers, allProducts, allMappings]);
+
     
     const mergedMappings = useMemo(() => {
         console.log('Merging mappings...');
@@ -1092,8 +1080,17 @@ const ProductMaster = () => {
     });
     const [isEditing, setIsEditing] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [formMessage, setFormMessage] = useState('');
     
-    const { data: products, loading, addItem, updateItem, deleteItem } = useFirebaseData(COLLECTIONS.PRODUCTS);
+    // 使用全局數據
+    const { 
+        data: { products }, 
+        loading: { products: loading },
+        addItem,
+        updateItem,
+        deleteItem,
+        refreshData
+    } = useFirebaseData();
 
     const handleChange = (e) => {
         setFormData({ ...formData, [e.target.name]: e.target.value });
@@ -1102,33 +1099,36 @@ const ProductMaster = () => {
     const handleSave = async (e) => {
         e.preventDefault();
         setIsSubmitting(true);
+        setFormMessage('');
         
         try {
             if (!formData.product_id || !formData.product_name || !formData.product_type) {
-                alert('Please fill all required fields');
+                setFormMessage('Please fill all required fields');
                 setIsSubmitting(false);
                 return;
             }
 
             const productToSave = {
                 ...formData,
-                created_at: serverTimestamp(),
-                updated_at: serverTimestamp()
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString()
             };
 
             if (isEditing) {
-                const result = await updateItem(formData.id, productToSave);
+                const result = await updateItem(COLLECTIONS.PRODUCTS, formData.id, productToSave);
                 if (!result.success) throw new Error(result.error);
-                alert('Product updated successfully!');
+                setFormMessage('Product updated successfully!');
             } else {
-                const result = await addItem(productToSave);
+                const result = await addItem(COLLECTIONS.PRODUCTS, productToSave);
                 if (!result.success) throw new Error(result.error);
-                alert('Product added successfully!');
+                setFormMessage('Product added successfully!');
             }
+            
             resetForm();
+            refreshData();
         } catch (error) {
             console.error("Error saving product:", error);
-            alert(`Error: ${error.message}`);
+            setFormMessage(`Error: ${error.message}`);
         } finally {
             setIsSubmitting(false);
         }
@@ -1142,9 +1142,10 @@ const ProductMaster = () => {
     const handleDelete = async (id) => {
         if (window.confirm('Are you sure you want to delete this product?')) {
             try {
-                const result = await deleteItem(id);
+                const result = await deleteItem(COLLECTIONS.PRODUCTS, id);
                 if (!result.success) throw new Error(result.error);
                 alert('Product deleted successfully!');
+                refreshData();
             } catch (error) {
                 console.error("Error deleting product:", error);
                 alert(`Error: ${error.message}`);
@@ -1158,6 +1159,7 @@ const ProductMaster = () => {
             warranty_period_months: 12, default_service_cycle_days: 180
         });
         setIsEditing(false);
+        setFormMessage('');
     };
 
     if (loading) return <div className="text-center py-8">Loading Product Data...</div>;
@@ -1189,6 +1191,12 @@ const ProductMaster = () => {
         <div className="space-y-6 px-4 md:px-0">
             <h1 className="text-xl md:text-3xl font-bold text-gray-800">Product Master</h1>
             
+            {formMessage && (
+                <div className={`p-3 rounded-lg font-medium mx-4 md:mx-0 ${formMessage.startsWith('Error') ? 'bg-red-100 text-red-800' : 'bg-green-100 text-green-800'}`}>
+                    {formMessage}
+                </div>
+            )}
+            
             <Card title={isEditing ? 'Edit Product' : 'Add New Product'} className="!p-4">
                 <form onSubmit={handleSave} className="grid grid-cols-1 md:grid-cols-3 gap-3 md:gap-4">
                     <Input label="Product ID" name="product_id" value={formData.product_id} onChange={handleChange} required />
@@ -1197,6 +1205,7 @@ const ProductMaster = () => {
                     <Input label="Manufacturer" name="manufacturer" value={formData.manufacturer} onChange={handleChange} />
                     <Input label="Warranty Period (months)" name="warranty_period_months" value={formData.warranty_period_months} onChange={handleChange} required type="number" min="1" />
                     <Input label="Default Service Cycle (days)" name="default_service_cycle_days" value={formData.default_service_cycle_days} onChange={handleChange} type="number" min="1" />
+
                     <div className="md:col-span-3 flex flex-col md:flex-row justify-end space-y-2 md:space-y-0 md:space-x-3">
                         <Button type="submit" color="blue" className="w-full md:w-auto" disabled={isSubmitting}>
                             {isSubmitting ? 'Saving...' : isEditing ? 'Update Product' : 'Add Product'}
@@ -1229,10 +1238,17 @@ const ServiceMaster = () => {
     });
     const [isEditing, setIsEditing] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [formMessage, setFormMessage] = useState('');
     
-    const { data: allCustomers, loading: customersLoading } = useFirebaseData(COLLECTIONS.CUSTOMERS);
-    const { data: allProducts, loading: productsLoading } = useFirebaseData(COLLECTIONS.PRODUCTS);
-    const { data: services, loading: servicesLoading, addItem, updateItem, deleteItem } = useFirebaseData(COLLECTIONS.SERVICES);
+    // 使用全局數據
+    const { 
+        data: { customers: allCustomers, products: allProducts, services }, 
+        loading: { customers: customersLoading, products: productsLoading, services: servicesLoading },
+        addItem,
+        updateItem,
+        deleteItem,
+        refreshData
+    } = useFirebaseData();
 
     const serviceTypeOptions = [
         { value: 'Regular', label: 'Regular' },
@@ -1268,46 +1284,49 @@ const ServiceMaster = () => {
     const handleSave = async (e) => {
         e.preventDefault();
         setIsSubmitting(true);
+        setFormMessage('');
         
         try {
             if (!formData.customer_id || !formData.product_id || !formData.service_date) {
-                alert('Please fill all required fields');
+                setFormMessage('Please fill all required fields');
                 setIsSubmitting(false);
                 return;
             }
 
             const serviceToSave = {
                 ...formData,
-                created_at: serverTimestamp(),
-                updated_at: serverTimestamp()
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString()
             };
 
             if (isEditing) {
-                const result = await updateItem(formData.id, serviceToSave);
+                const result = await updateItem(COLLECTIONS.SERVICES, formData.id, serviceToSave);
                 if (!result.success) throw new Error(result.error);
-                alert('Service record updated successfully!');
+                setFormMessage('Service record updated successfully!');
             } else {
-                const result = await addItem(serviceToSave);
+                const result = await addItem(COLLECTIONS.SERVICES, serviceToSave);
                 if (!result.success) throw new Error(result.error);
                 
                 // Add log entry
-                await addDoc(collection(db, COLLECTIONS.LOGS), {
+                await addItem(COLLECTIONS.LOGS, {
                     customer_id: formData.customer_id,
                     action: 'Service Record',
                     date: new Date().toISOString(),
                     notes: formData.service_notes || `${formData.service_type} service completed`,
                     product_id: formData.product_id,
                     log_type: 'Service',
-                    created_at: serverTimestamp(),
-                    updated_at: serverTimestamp()
+                    created_at: new Date().toISOString(),
+                    updated_at: new Date().toISOString()
                 });
                 
-                alert('Service record added successfully!');
+                setFormMessage('Service record added successfully!');
             }
+            
             resetForm();
+            refreshData();
         } catch (error) {
             console.error("Error saving service record:", error);
-            alert(`Error: ${error.message}`);
+            setFormMessage(`Error: ${error.message}`);
         } finally {
             setIsSubmitting(false);
         }
@@ -1321,9 +1340,10 @@ const ServiceMaster = () => {
     const handleDelete = async (id) => {
         if (window.confirm('Are you sure you want to delete this service record?')) {
             try {
-                const result = await deleteItem(id);
+                const result = await deleteItem(COLLECTIONS.SERVICES, id);
                 if (!result.success) throw new Error(result.error);
                 alert('Service record deleted successfully!');
+                refreshData();
             } catch (error) {
                 console.error("Error deleting service record:", error);
                 alert(`Error: ${error.message}`);
@@ -1342,6 +1362,7 @@ const ServiceMaster = () => {
             next_service_date: ''
         });
         setIsEditing(false);
+        setFormMessage('');
     };
     
     const customerOptions = allCustomers.map(c => ({ value: c.id, label: `${c.first_name} ${c.last_name} (${c.vehicle_number})` }));
@@ -1388,6 +1409,12 @@ const ServiceMaster = () => {
         <div className="space-y-6 px-4 md:px-0">
             <h1 className="text-xl md:text-3xl font-bold text-gray-800">Service Master</h1>
             
+            {formMessage && (
+                <div className={`p-3 rounded-lg font-medium mx-4 md:mx-0 ${formMessage.startsWith('Error') ? 'bg-red-100 text-red-800' : 'bg-green-100 text-green-800'}`}>
+                    {formMessage}
+                </div>
+            )}
+            
             <Card title={isEditing ? 'Edit Service Record' : 'Add New Service Record'} className="!p-4">
                 <form onSubmit={handleSave} className="grid grid-cols-1 md:grid-cols-3 gap-3 md:gap-4">
                     <Select label="Customer" name="customer_id" value={formData.customer_id} onChange={handleChange} options={customerOptions} required />
@@ -1403,7 +1430,7 @@ const ServiceMaster = () => {
                     <div className="md:col-span-3">
                         <Input label="Service Notes" name="service_notes" value={formData.service_notes} onChange={handleChange} />
                     </div>
-                    
+
                     <div className="md:col-span-3 flex flex-col md:flex-row justify-end space-y-2 md:space-y-0 md:space-x-3">
                         <Button type="submit" color="green" className="w-full md:w-auto" disabled={isSubmitting}>
                             {isSubmitting ? 'Saving...' : isEditing ? 'Update Service' : 'Record Service'}
@@ -1429,9 +1456,13 @@ const AdminDashboard = () => {
     const [today, setToday] = useState('');
     const [isOnline, setIsOnline] = useState(navigator.onLine);
     
-    const { data: allCustomers, loading: customersLoading } = useFirebaseData(COLLECTIONS.CUSTOMERS);
-    const { data: allProducts, loading: productsLoading } = useFirebaseData(COLLECTIONS.PRODUCTS);
-    const { data: allMappings, loading: mappingsLoading } = useFirebaseData(COLLECTIONS.MAPPINGS);
+    // 使用全局數據
+    const { 
+        data: { customers: allCustomers, products: allProducts, mappings: allMappings }, 
+        loading: { customers: customersLoading, products: productsLoading, mappings: mappingsLoading },
+        updateItem,
+        addItem
+    } = useFirebaseData();
 
     // 監聽網絡狀態
     useEffect(() => {
@@ -1492,21 +1523,26 @@ const AdminDashboard = () => {
     const handleSendReminder = async (mappingId, reminderKey, customerName) => {
         try {
             // Update the mapping to mark reminder as sent
-            const mappingRef = doc(db, COLLECTIONS.MAPPINGS, mappingId);
-            await updateDoc(mappingRef, {
+            const updates = {
                 [`reminder_status.${reminderKey}`]: true,
-                updated_at: serverTimestamp()
-            });
+                updated_at: new Date().toISOString()
+            };
+            
+            const result = await updateItem(COLLECTIONS.MAPPINGS, mappingId, updates);
+            
+            if (!result.success) {
+                throw new Error(result.error);
+            }
 
             // Add log entry
-            await addDoc(collection(db, COLLECTIONS.LOGS), {
+            await addItem(COLLECTIONS.LOGS, {
                 customer_id: mappingId,
                 action: `Reminder Sent: ${reminderKey}`,
                 date: new Date().toISOString(),
                 notes: `Reminder sent to ${customerName}`,
                 log_type: 'Reminder',
-                created_at: serverTimestamp(),
-                updated_at: serverTimestamp()
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString()
             });
 
             alert(`Reminder sent to ${customerName}`);
@@ -1731,8 +1767,11 @@ const AdminDashboard = () => {
 
 // 8. CUSTOMER LOGS MODAL COMPONENT
 const CustomerLogsModal = ({ customerId, customerName, onClose }) => {
-    const { data: allProducts, loading: productsLoading } = useFirebaseData(COLLECTIONS.PRODUCTS);
-    const { data: allLogs, loading: logsLoading } = useFirebaseData(COLLECTIONS.LOGS);
+    // 使用全局數據
+    const { 
+        data: { products: allProducts, logs: allLogs }, 
+        loading: { products: productsLoading, logs: logsLoading }
+    } = useFirebaseData();
     
     const logs = useMemo(() => {
         if (!customerId || !allLogs) return [];
@@ -1870,9 +1909,15 @@ const CustomerManagementView = () => {
     const [formMessage, setFormMessage] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
     
-    const { data: customers, loading: customersLoading, addItem, updateItem, deleteItem } = useFirebaseData(COLLECTIONS.CUSTOMERS);
-    const { data: allProducts } = useFirebaseData(COLLECTIONS.PRODUCTS);
-    const { data: allLogs } = useFirebaseData(COLLECTIONS.LOGS);
+    // 使用全局數據
+    const { 
+        data: { customers, products: allProducts, logs: allLogs }, 
+        loading: { customers: customersLoading },
+        addItem,
+        updateItem,
+        deleteItem,
+        refreshData
+    } = useFirebaseData();
 
     const handleCustomerChange = (e) => {
         setFormData({ ...formData, [e.target.name]: e.target.value });
@@ -1892,22 +1937,22 @@ const CustomerManagementView = () => {
 
             const customerToSave = {
                 ...formData,
-                created_at: serverTimestamp(),
-                updated_at: serverTimestamp()
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString()
             };
 
             if (isEditing) {
-                const result = await updateItem(formData.id, customerToSave);
+                const result = await updateItem(COLLECTIONS.CUSTOMERS, formData.id, customerToSave);
                 if (!result.success) throw new Error(result.error);
                 setFormMessage(`Success! Customer ${formData.first_name} updated successfully.`);
             } else {
-                const result = await addItem(customerToSave);
+                const result = await addItem(COLLECTIONS.CUSTOMERS, customerToSave);
                 if (!result.success) throw new Error(result.error);
                 setFormMessage(`Success! New customer ${formData.first_name} created. ID: ${result.id}`);
             }
             
             resetForm();
-            
+            refreshData();
         } catch (error) {
             console.error("Error saving customer:", error);
             setFormMessage(`Error: ${error.message}`);
@@ -1920,6 +1965,7 @@ const CustomerManagementView = () => {
         setFormData(initialCustomerData);
         setIsEditing(false);
         setShowCustomerForm(false);
+        setFormMessage('');
     };
 
     const handleViewLogs = (customer) => {
@@ -1942,9 +1988,10 @@ const CustomerManagementView = () => {
     const handleDeleteCustomer = async (id, name) => {
         if(window.confirm(`Are you sure you want to delete customer ${name}? This action is irreversible!`)) {
             try {
-                const result = await deleteItem(id);
+                const result = await deleteItem(COLLECTIONS.CUSTOMERS, id);
                 if (!result.success) throw new Error(result.error);
                 alert(`Customer ${name} deleted successfully!`);
+                refreshData();
             } catch (error) {
                 console.error("Error deleting customer:", error);
                 alert(`Error: ${error.message}`);
@@ -1991,9 +2038,7 @@ const CustomerManagementView = () => {
             {showCustomerForm && (
                 <Card title={isEditing ? 'Edit Customer' : 'Add New Customer'} className="!p-4">
                     {formMessage && (
-                        <div className={`p-3 rounded-lg mb-4 font-medium text-sm md:text-base ${
-                            formMessage.startsWith('Success') ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
-                        }`}>
+                        <div className={`p-3 rounded-lg mb-4 font-medium text-sm md:text-base ${formMessage.startsWith('Success') ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
                             {formMessage}
                         </div>
                     )}
@@ -2044,7 +2089,6 @@ const CustomerManagementView = () => {
                 </Button>
             </div>
 
-            {/* Customer List */}
             <Card title="Existing Customer List" className="!p-4">
                 <p className="text-sm text-gray-500 mb-4">Total Customers: {customers.length}</p>
                 <ResponsiveTable columns={customerColumns} data={customerData} />
@@ -2071,11 +2115,23 @@ const ReportingModule = () => {
     const [selectedCustomerId, setSelectedCustomerId] = useState('');
     const [isExporting, setIsExporting] = useState(false);
 
-    const { data: allCustomers, loading: customersLoading } = useFirebaseData(COLLECTIONS.CUSTOMERS);
-    const { data: allProducts, loading: productsLoading } = useFirebaseData(COLLECTIONS.PRODUCTS);
-    const { data: allMappings, loading: mappingsLoading } = useFirebaseData(COLLECTIONS.MAPPINGS);
-    const { data: allServices, loading: servicesLoading } = useFirebaseData(COLLECTIONS.SERVICES);
-    const { data: allLogs, loading: logsLoading } = useFirebaseData(COLLECTIONS.LOGS);
+    // 使用全局數據
+    const { 
+        data: { 
+            customers: allCustomers, 
+            products: allProducts, 
+            mappings: allMappings, 
+            services: allServices, 
+            logs: allLogs 
+        }, 
+        loading: { 
+            customers: customersLoading, 
+            products: productsLoading, 
+            mappings: mappingsLoading, 
+            services: servicesLoading, 
+            logs: logsLoading 
+        }
+    } = useFirebaseData();
 
     const customerOptions = allCustomers.map(c => ({ value: c.id, label: `${c.first_name} ${c.last_name} (${c.vehicle_number})` }));
     
@@ -2107,10 +2163,11 @@ const ReportingModule = () => {
         try {
             const wsData = [];
             wsData.push(headers.map(h => h.label));
+
             data.forEach(row => {
                 wsData.push(headers.map(header => row[header.key] || ''));
             });
-            
+
             const ws = XLSX.utils.aoa_to_sheet(wsData);
             const wb = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb, ws, 'Report');
@@ -2174,7 +2231,8 @@ const ReportingModule = () => {
                 </body>
                 </html>
             `;
-            
+
+            // Create blob and download
             const blob = new Blob([htmlContent], { type: 'text/html' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -2251,7 +2309,8 @@ const ReportingModule = () => {
         
         printWindow.document.write(htmlContent);
         printWindow.document.close();
-        
+
+        // Auto-print after content loads
         printWindow.onload = function() {
             printWindow.print();
             printWindow.onafterprint = function() {
@@ -2393,7 +2452,6 @@ const ReportingModule = () => {
                 </div>
             )}
 
-            {/* 1. Customer Log Export Section */}
             <Card title="Customer Log Export & Print" className="!p-4">
                 <p className="text-sm text-gray-600 mb-4">Export the complete activity history for a specific customer.</p>
                 <div className="flex flex-col md:flex-row space-y-3 md:space-y-0 md:space-x-4 items-end">
@@ -2407,6 +2465,7 @@ const ReportingModule = () => {
                             required
                         />
                     </div>
+
                     <div className="flex flex-col md:flex-row gap-2 w-full md:w-auto">
                         <Button 
                             onClick={() => exportToPDF(customerLogData, 'Customer_Log_Report', customerLogHeaders)} 
@@ -2450,7 +2509,6 @@ const ReportingModule = () => {
                 )}
             </Card>
 
-            {/* 2. System Report Generation Section */}
             <Card title="System Data Reports (Filterable)" className="!p-4">
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-3 md:gap-4 items-end">
                     {/* Report Type */}
@@ -2566,10 +2624,7 @@ const App = () => {
 
     // 監聽網絡狀態
     useEffect(() => {
-        const handleOnline = () => {
-            setIsOnline(true);
-            syncOfflineData();
-        };
+        const handleOnline = () => setIsOnline(true);
         const handleOffline = () => setIsOnline(false);
         
         window.addEventListener('online', handleOnline);
@@ -2580,47 +2635,6 @@ const App = () => {
             window.removeEventListener('offline', handleOffline);
         };
     }, []);
-
-    // 同步離線數據
-    const syncOfflineData = async () => {
-        try {
-            const queue = JSON.parse(localStorage.getItem('offline_queue') || '[]');
-            if (queue.length === 0) return;
-
-            console.log('Syncing offline data...', queue.length, 'items');
-            
-            for (const item of queue) {
-                try {
-                    if (item.action === 'add') {
-                        await addDoc(collection(db, item.collection), {
-                            ...item.data,
-                            created_at: serverTimestamp(),
-                            updated_at: serverTimestamp()
-                        });
-                    } else if (item.action === 'update') {
-                        const docRef = doc(db, item.collection, item.id);
-                        await updateDoc(docRef, {
-                            ...item.data,
-                            updated_at: serverTimestamp()
-                        });
-                    } else if (item.action === 'delete') {
-                        const docRef = doc(db, item.collection, item.id);
-                        await deleteDoc(docRef);
-                    }
-                } catch (error) {
-                    console.error('Error syncing item:', error);
-                }
-            }
-
-            // 清除已同步的隊列
-            localStorage.removeItem('offline_queue');
-            setOfflineQueue([]);
-            
-            alert('Offline data has been synced successfully!');
-        } catch (error) {
-            console.error('Error syncing offline data:', error);
-        }
-    };
 
     const renderContent = () => {
         switch (currentView) {
@@ -2726,16 +2740,6 @@ const App = () => {
                                                     {isOnline ? 'Online' : 'Offline'}
                                                 </span>
                                             </div>
-                                            {offlineQueue.length > 0 && (
-                                                <Button 
-                                                    onClick={syncOfflineData}
-                                                    color="orange"
-                                                    className="text-xs py-1 px-2"
-                                                    disabled={!isOnline}
-                                                >
-                                                    Sync {offlineQueue.length} pending
-                                                </Button>
-                                            )}
                                         </div>
                                     </div>
                                     
@@ -2777,4 +2781,3 @@ const App = () => {
 };
 
 export default App;
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             
